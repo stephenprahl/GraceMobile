@@ -1,0 +1,101 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String?
+  email     String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  chatSessions ChatSession[]
+
+  @@map("users")
+}
+
+model ChatSession {
+  id        String   @id @default(cuid())
+  userId    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user     User?     @relation(fields: [userId], references: [id])
+  messages Message[]
+
+  @@map("chat_sessions")
+}
+
+model Message {
+  id            String      @id @default(cuid())
+  content       String
+  sender        MessageSender
+  messageType   MessageType @default(TEXT)
+  chatSessionId String
+  createdAt     DateTime    @default(now())
+
+  // Relations
+  chatSession ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+}
+
+model BibleVerse {
+  id          String @id @default(cuid())
+  book        String
+  chapter     Int
+  verse       Int
+  text        String
+  translation String @default("NIV")
+
+  @@unique([book, chapter, verse, translation])
+  @@map("bible_verses")
+}
+
+model Prayer {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  category    String
+  tags        String[]
+  createdAt   DateTime @default(now())
+
+  @@map("prayers")
+}
+
+model Devotional {
+  id        String   @id @default(cuid())
+  title     String
+  content   String
+  verseRef  String?
+  date      DateTime
+  createdAt DateTime @default(now())
+
+  @@map("devotionals")
+}
+
+enum MessageSender {
+  USER
+  BOT
+}
+
+enum MessageType {
+  TEXT
+  VERSE
+  PRAYER
+  DEVOTIONAL
+  ADVICE
+}
