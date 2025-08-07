@@ -3,20 +3,67 @@ import { PrismaClient } from '@prisma/client';
 import 'dotenv/config';
 import { Elysia } from 'elysia';
 
-const app = new Elysia();
+const app = new Elysia()
+  .use(cors({
+    origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001', 'http://localhost:8081'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
+  }));
+
 const prisma = new PrismaClient();
 
-// CORS middleware
-app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+// Health check
+app.get('/', () => ({ 
+  status: 'ok',
+  message: 'GraceMobile API is running',
+  timestamp: new Date().toISOString()
 }));
 
-// Health check
-app.get('/', () => ({ message: 'ChristianAI API is running' }));
-
 // Chat endpoints
+// Get all chat sessions
+app.get('/api/chat/sessions', async () => {
+  try {
+    const sessions = await prisma.chatSession.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          take: 1 // Only get the first message for preview
+        }
+      }
+    });
+    return { success: true, data: sessions };
+  } catch (error) {
+    console.error('Error fetching chat sessions:', error);
+    return { success: false, error: 'Failed to fetch chat sessions' };
+  }
+});
+
+// Get a specific chat session with all messages
+app.get('/api/chat/sessions/:id', async ({ params }) => {
+  try {
+    const session = await prisma.chatSession.findUnique({
+      where: { id: params.id },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' }
+        }
+      }
+    });
+    
+    if (!session) {
+      return { success: false, error: 'Chat session not found' };
+    }
+    
+    return { success: true, data: session };
+  } catch (error) {
+    console.error('Error fetching chat session:', error);
+    return { success: false, error: 'Failed to fetch chat session' };
+  }
+});
+
+// Send a new message
 app.post('/api/chat/message', async ({ body }) => {
   try {
     const { content, sessionId } = body as { content: string; sessionId?: string };
@@ -190,16 +237,72 @@ function processUserInput(input: string) {
   }
 }
 
+import { createServer } from 'http';
+
 // Graceful shutdown
-process.on('SIGINT', async () => {
+const shutdown = async () => {
+  console.log('Shutting down gracefully...');
   await prisma.$disconnect();
   process.exit(0);
+};
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+
+// Start the server
+const port = parseInt(process.env.PORT || '4000');
+const host = process.env.HOST || '0.0.0.0';
+
+// Create HTTP server
+const server = createServer((req, res) => {
+  // Convert Node's request to a Fetch API compatible request
+  const request = new Request(`http://${host}:${port}${req.url}`, {
+    method: req.method,
+    headers: req.headers as any,
+    // @ts-ignore - Body type mismatch
+    body: req.method !== 'GET' && req.method !== 'HEAD' ? req : undefined,
+    // Required for Node.js 18+ when sending a body
+    // @ts-ignore - Not in the type definitions yet
+    duplex: 'half'
+  });
+
+  // Handle the request with Elysia
+  // @ts-ignore - Type mismatch in Elysia's handle method
+  app.handle(request, {
+    waitUntil: (promise: Promise<unknown>) => {
+      promise.catch(console.error);
+      return Promise.resolve();
+    },
+    passThroughOnException: () => {
+      console.error('Request failed');
+    },
+  })
+    .then((response) => {
+      // Convert Fetch API response to Node's response
+      res.statusCode = response.status;
+      response.headers.forEach((value, key) => {
+        res.setHeader(key, value);
+      });
+      return response.arrayBuffer();
+    })
+    .then((buffer) => {
+      res.end(Buffer.from(buffer));
+    })
+    .catch((error) => {
+      console.error('Error handling request:', error);
+      res.statusCode = 500;
+      res.end('Internal Server Error');
+    });
 });
 
-const port = 3001;
+// Start the server
+server.listen(port, host, () => {
+  console.log(`🚀 GraceMobile server is running at http://${host}:${port}`);
+});
 
-console.log(`🚀 ChristianAI API server starting on port ${port}`);
-
-app.listen(port);
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled Promise Rejection:', err);
+});
 
 export default app;
